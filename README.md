@@ -293,3 +293,7 @@ Cette règle bloque **tout accès direct** depuis un navigateur. Seul ton serveu
 - **CORS** : la sécurité du navigateur qui bloque les requêtes vers un serveur si celui-ci n'a pas explicitement autorisé l'adresse d'où vient la requête.
 - **Render** : la plateforme qui héberge ton serveur `kivu-api` en ligne.
 - **Firebase Hosting** : la plateforme qui héberge ton site web (HTML/CSS/JS).
+
+
+
+Rubona2003@@
