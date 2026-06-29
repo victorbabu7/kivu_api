@@ -6,6 +6,7 @@ const cors = require('cors');
 
 const { creerSuperAdminSiAbsent } = require('./routes/auth');
 const { connectMongo } = require('./config/mongodb');
+const { importerSiVide } = require('./import-data');
 
 const app = express();
 
@@ -48,7 +49,8 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 
 connectMongo()
-    .then(() => {
+    .then(async () => {
+        await importerSiVide();
         app.listen(PORT, () => {
             console.log(`yes , ca marche ${PORT}`);
         });
