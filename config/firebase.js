@@ -12,8 +12,7 @@ function initFirebase() {
 
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    // Les variables d'environnement stockent les retours à la ligne comme
-    // la séquence littérale "\n" — il faut les reconvertir en vrais \n.
+  
     const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
     if (!projectId || !clientEmail || !privateKey) {

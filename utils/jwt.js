@@ -1,6 +1,4 @@
-// ══════════════════════════════════════════
-// JWT — création et vérification des tokens
-// ══════════════════════════════════════════
+
 const jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET;
@@ -19,7 +17,7 @@ function creerToken(payload) {
 }
 
 function verifierToken(token) {
-    return jwt.verify(token, SECRET); // lève une erreur si invalide/expiré
+    return jwt.verify(token, SECRET); 
 }
 
 module.exports = { creerToken, verifierToken };

@@ -1,21 +1,18 @@
 // ══════════════════════════════════════════
-// ROUTES AUTH — login unifié, inscription, récupération mdp
+// ROUTES AUTH — login unifié, inscription, récupération mdp (MongoDB)
 // ══════════════════════════════════════════
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/firebase');
+const Admin = require('../models/Admin');
+const CompteArtiste = require('../models/CompteArtiste');
 const { hashSimple } = require('../utils/hash');
 const { creerToken } = require('../utils/jwt');
 
-const COL_ADMINS = 'kivu-admins';
-const COL_COMPTES_ARTISTES = 'kivu-artistes-comptes';
-
 // Crée le super admin par défaut si la collection admins est vide.
-// Appelé une fois au démarrage du serveur (voir server.js).
 async function creerSuperAdminSiAbsent() {
-    const snap = await db.collection(COL_ADMINS).get();
-    if (!snap.empty) return;
-    await db.collection(COL_ADMINS).add({
+    const count = await Admin.countDocuments();
+    if (count > 0) return;
+    await Admin.create({
         nom: 'Super Admin',
         email: 'adminhubkivu@gmail.com',
         username: 'superadmin',
@@ -28,8 +25,6 @@ async function creerSuperAdminSiAbsent() {
 }
 
 // POST /api/auth/login
-// Body: { identifiant, motDePasse }
-// Cherche d'abord dans les admins, puis dans les comptes artistes.
 router.post('/login', async (req, res) => {
     const identifiant = (req.body.identifiant || '').trim().toLowerCase();
     const motDePasse = req.body.motDePasse || '';
@@ -39,15 +34,13 @@ router.post('/login', async (req, res) => {
     }
 
     try {
-        // 1. Chercher dans les admins (email OU username)
-        const snapAdmins = await db.collection(COL_ADMINS).get();
+        const admins = await Admin.find({});
         let admin = null;
-        snapAdmins.forEach(doc => {
-            const a = doc.data();
+        admins.forEach(a => {
             const emailMatch = (a.email || '').toLowerCase() === identifiant;
             const usernameMatch = (a.username || '').toLowerCase() === identifiant;
             const passMatch = a.motDePasse === hashSimple(motDePasse);
-            if ((emailMatch || usernameMatch) && passMatch) admin = { id: doc.id, ...a };
+            if ((emailMatch || usernameMatch) && passMatch) admin = a;
         });
 
         if (admin) {
@@ -59,13 +52,11 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // 2. Chercher dans les comptes artistes (email uniquement)
-        const snapArtistes = await db.collection(COL_COMPTES_ARTISTES).get();
+        const artistes = await CompteArtiste.find({});
         let artiste = null;
-        snapArtistes.forEach(doc => {
-            const a = doc.data();
+        artistes.forEach(a => {
             if ((a.email || '') === identifiant && a.motDePasse === hashSimple(motDePasse)) {
-                artiste = { id: doc.id, ...a };
+                artiste = a;
             }
         });
 
@@ -83,7 +74,6 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // 3. Rien trouvé
         return res.status(401).json({ erreur: 'Email/username ou mot de passe incorrect.' });
 
     } catch (e) {
@@ -93,7 +83,6 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/inscription
-// Body: { prenom, nom, email, tel, naiss, adresse, filiere, description, motDePasse }
 router.post('/inscription', async (req, res) => {
     const { prenom, nom, tel, naiss, adresse, filiere, description, motDePasse } = req.body;
     const email = (req.body.email || '').trim().toLowerCase();
@@ -106,14 +95,12 @@ router.post('/inscription', async (req, res) => {
     }
 
     try {
-        const snap = await db.collection(COL_COMPTES_ARTISTES).get();
-        let doublon = false;
-        snap.forEach(doc => { if ((doc.data().email || '') === email) doublon = true; });
-        if (doublon) {
+        const existant = await CompteArtiste.findOne({ email });
+        if (existant) {
             return res.status(409).json({ erreur: 'Cet email est déjà utilisé.' });
         }
 
-        await db.collection(COL_COMPTES_ARTISTES).add({
+        await CompteArtiste.create({
             prenom, nom, email, tel, naiss, adresse, filiere, description,
             motDePasse: hashSimple(motDePasse),
             statut: 'en_attente',
@@ -129,7 +116,6 @@ router.post('/inscription', async (req, res) => {
 });
 
 // POST /api/auth/verifier-recuperation
-// Body: { email, motSecurite } -> vérifie l'identité avant reset
 router.post('/verifier-recuperation', async (req, res) => {
     const email = (req.body.email || '').trim().toLowerCase();
     const motSecurite = req.body.motSecurite || '';
@@ -142,21 +128,19 @@ router.post('/verifier-recuperation', async (req, res) => {
         let trouve = null;
         let type = null;
 
-        const snapA = await db.collection(COL_ADMINS).get();
-        snapA.forEach(doc => {
-            const a = doc.data();
+        const admins = await Admin.find({});
+        admins.forEach(a => {
             if ((a.email || '').toLowerCase() === email && a.motSecurite === hashSimple(motSecurite)) {
-                trouve = { id: doc.id };
+                trouve = { id: a.id };
                 type = 'admin';
             }
         });
 
         if (!trouve) {
-            const snapE = await db.collection(COL_COMPTES_ARTISTES).get();
-            snapE.forEach(doc => {
-                const a = doc.data();
+            const artistes = await CompteArtiste.find({});
+            artistes.forEach(a => {
                 if ((a.email || '').toLowerCase() === email && a.motSecurite === hashSimple(motSecurite)) {
-                    trouve = { id: doc.id };
+                    trouve = { id: a.id };
                     type = 'artiste';
                 }
             });
@@ -166,7 +150,6 @@ router.post('/verifier-recuperation', async (req, res) => {
             return res.status(401).json({ erreur: 'Email ou mot de sécurité incorrect.' });
         }
 
-        // Token courte durée juste pour autoriser le reset qui suit
         const resetToken = creerToken({ id: trouve.id, type: 'reset', resetType: type });
         return res.json({ ok: true, resetToken, type });
     } catch (e) {
@@ -176,7 +159,6 @@ router.post('/verifier-recuperation', async (req, res) => {
 });
 
 // POST /api/auth/reinitialiser-mot-de-passe
-// Body: { resetToken, nouveauMotDePasse }
 router.post('/reinitialiser-mot-de-passe', async (req, res) => {
     const { resetToken, nouveauMotDePasse } = req.body;
     const { verifierToken } = require('../utils/jwt');
@@ -190,8 +172,8 @@ router.post('/reinitialiser-mot-de-passe', async (req, res) => {
         if (decoded.type !== 'reset') {
             return res.status(400).json({ erreur: 'Token de réinitialisation invalide.' });
         }
-        const collection = decoded.resetType === 'admin' ? COL_ADMINS : COL_COMPTES_ARTISTES;
-        await db.collection(collection).doc(decoded.id).update({
+        const Model = decoded.resetType === 'admin' ? Admin : CompteArtiste;
+        await Model.findByIdAndUpdate(decoded.id, {
             motDePasse: hashSimple(nouveauMotDePasse)
         });
         return res.json({ ok: true, message: 'Mot de passe réinitialisé.' });

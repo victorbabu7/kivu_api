@@ -1,19 +1,15 @@
 // ══════════════════════════════════════════
-// ROUTES ŒUVRES (collection kivu-oeuvres)
+// ROUTES ŒUVRES (MongoDB)
 // ══════════════════════════════════════════
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/firebase');
+const Oeuvre = require('../models/Oeuvre');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-
-const COL = 'kivu-oeuvres';
 
 // GET /api/oeuvres — liste publique
 router.get('/', async (req, res) => {
     try {
-        const snap = await db.collection(COL).get();
-        const oeuvres = [];
-        snap.forEach(doc => oeuvres.push({ id: doc.id, ...doc.data() }));
+        const oeuvres = await Oeuvre.find({});
         res.json(oeuvres);
     } catch (e) {
         res.status(500).json({ erreur: e.message });
@@ -23,40 +19,39 @@ router.get('/', async (req, res) => {
 // GET /api/oeuvres/:id
 router.get('/:id', async (req, res) => {
     try {
-        const snap = await db.collection(COL).doc(req.params.id).get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
-        res.json({ id: snap.id, ...snap.data() });
+        const oeuvre = await Oeuvre.findById(req.params.id);
+        if (!oeuvre) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
+        res.json(oeuvre);
     } catch (e) {
-        res.status(500).json({ erreur: e.message });
+        res.status(404).json({ erreur: 'Œuvre introuvable.' });
     }
 });
 
 // POST /api/oeuvres/:id/like — public
 router.post('/:id/like', async (req, res) => {
     try {
-        const ref = db.collection(COL).doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
-        const nouveauLikes = (snap.data().likes || 0) + 1;
-        await ref.update({ likes: nouveauLikes });
-        res.json({ likes: nouveauLikes });
+        const oeuvre = await Oeuvre.findById(req.params.id);
+        if (!oeuvre) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
+        oeuvre.likes = (oeuvre.likes || 0) + 1;
+        await oeuvre.save();
+        res.json({ likes: oeuvre.likes });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// POST /api/oeuvres — créer (admin uniquement ; les artistes utilisent /api/espace-artiste/oeuvres)
+// POST /api/oeuvres — créer (admin uniquement)
 router.post('/', requireAuth, requireAdmin, async (req, res) => {
     const { titre, type, artiste, annee, url, desc } = req.body;
     if (!titre || !type || !artiste) {
         return res.status(400).json({ erreur: 'Titre, type et artiste obligatoires.' });
     }
     try {
-        const ref = await db.collection(COL).add({
+        const oeuvre = await Oeuvre.create({
             titre, type, artiste, annee: annee || '', url: url || '', desc: desc || '',
             likes: 0, date: new Date().toLocaleDateString('fr-FR')
         });
-        res.status(201).json({ id: ref.id });
+        res.status(201).json({ id: oeuvre.id });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
@@ -69,7 +64,7 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
         return res.status(400).json({ erreur: 'Titre, type et artiste obligatoires.' });
     }
     try {
-        await db.collection(COL).doc(req.params.id).update({
+        await Oeuvre.findByIdAndUpdate(req.params.id, {
             titre, type, artiste, annee: annee || '', url: url || '', desc: desc || ''
         });
         res.json({ ok: true });
@@ -81,7 +76,7 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
 // DELETE /api/oeuvres/:id — admin uniquement
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
-        await db.collection(COL).doc(req.params.id).delete();
+        await Oeuvre.findByIdAndDelete(req.params.id);
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });

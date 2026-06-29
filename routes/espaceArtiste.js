@@ -1,48 +1,46 @@
 // ══════════════════════════════════════════
-// ROUTES ESPACE ARTISTE — profil, publication, œuvres, suppression compte
+// ROUTES ESPACE ARTISTE — profil, publication, œuvres, suppression compte (MongoDB)
 // ══════════════════════════════════════════
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/firebase');
+const CompteArtiste = require('../models/CompteArtiste');
+const Artiste = require('../models/Artiste');
+const Oeuvre = require('../models/Oeuvre');
 const { requireAuth, requireArtiste } = require('../middleware/auth');
 
-const COL_COMPTES = 'kivu-artistes-comptes';
-const COL_ARTISTES = 'kivu-artistes';
-const COL_OEUVRES = 'kivu-oeuvres';
-
-// Toutes les routes ci-dessous nécessitent d'être connecté en tant qu'artiste.
 router.use(requireAuth, requireArtiste);
 
-// GET /api/espace-artiste/moi — récupère les infos du compte connecté
+// GET /api/espace-artiste/moi
 router.get('/moi', async (req, res) => {
     try {
-        const snap = await db.collection(COL_COMPTES).doc(req.user.id).get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Compte introuvable.' });
-        const d = snap.data();
-        delete d.motDePasse;
-        delete d.motSecurite;
-        res.json({ id: snap.id, ...d });
+        const compte = await CompteArtiste.findById(req.user.id).select('-motDePasse -motSecurite');
+        if (!compte) return res.status(404).json({ erreur: 'Compte introuvable.' });
+        res.json(compte);
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// PUT /api/espace-artiste/profil — met à jour le profil (sans publier)
+// PUT /api/espace-artiste/profil
 router.put('/profil', async (req, res) => {
     const { nom, filiere, ville, tel, emailContact, bio, photo } = req.body;
     if (!nom || !filiere) return res.status(400).json({ erreur: 'Nom et filière obligatoires.' });
     try {
         const compteId = req.user.id;
-        await db.collection(COL_COMPTES).doc(compteId).update({
-            nomArtiste: nom, filiere,
-            ville: ville || '', tel: tel || '', emailContact: emailContact || '',
-            bio: bio || '', photo: photo || ''
-        });
+        const compte = await CompteArtiste.findById(compteId);
+        if (!compte) return res.status(404).json({ erreur: 'Compte introuvable.' });
 
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        const compte = compteSnap.data();
+        compte.nomArtiste = nom;
+        compte.filiere = filiere;
+        compte.ville = ville || '';
+        compte.tel = tel || '';
+        compte.emailContact = emailContact || '';
+        compte.bio = bio || '';
+        compte.photo = photo || '';
+        await compte.save();
+
         if (compte.artisteId) {
-            await db.collection(COL_ARTISTES).doc(compte.artisteId).update({
+            await Artiste.findByIdAndUpdate(compte.artisteId, {
                 nom, filiere, ville: ville || '', tel: tel || '',
                 email: emailContact || '', bio: bio || '', photo: photo || ''
             });
@@ -53,154 +51,142 @@ router.put('/profil', async (req, res) => {
     }
 });
 
-// POST /api/espace-artiste/publier — publie le profil sur la plateforme publique
+// POST /api/espace-artiste/publier
 router.post('/publier', async (req, res) => {
     try {
         const compteId = req.user.id;
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        if (!compteSnap.exists) return res.status(404).json({ erreur: 'Compte introuvable.' });
-        const d = compteSnap.data();
+        const d = await CompteArtiste.findById(compteId);
+        if (!d) return res.status(404).json({ erreur: 'Compte introuvable.' });
 
         const nom = d.nomArtiste || (d.prenom + ' ' + d.nom);
         let artisteId = d.artisteId;
 
         if (!artisteId) {
-            const ref = await db.collection(COL_ARTISTES).add({
+            const artiste = await Artiste.create({
                 nom, filiere: d.filiere,
                 ville: d.ville || 'Kivu',
                 tel: d.tel || '', email: d.emailContact || d.email || '',
                 bio: d.bio || d.description || '', photo: d.photo || '',
                 likes: 0, compteId, date: new Date().toLocaleDateString('fr-FR')
             });
-            artisteId = ref.id;
+            artisteId = artiste.id;
         }
 
-        await db.collection(COL_COMPTES).doc(compteId).update({ profilPublie: true, artisteId });
+        d.profilPublie = true;
+        d.artisteId = artisteId;
+        await d.save();
         res.json({ ok: true, artisteId });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// POST /api/espace-artiste/depublier — retire le profil de la plateforme publique
+// POST /api/espace-artiste/depublier
 router.post('/depublier', async (req, res) => {
     try {
         const compteId = req.user.id;
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        if (!compteSnap.exists) return res.status(404).json({ erreur: 'Compte introuvable.' });
-        const d = compteSnap.data();
+        const d = await CompteArtiste.findById(compteId);
+        if (!d) return res.status(404).json({ erreur: 'Compte introuvable.' });
 
         if (d.artisteId) {
-            await db.collection(COL_ARTISTES).doc(d.artisteId).delete();
+            await Artiste.findByIdAndDelete(d.artisteId);
         }
-        await db.collection(COL_COMPTES).doc(compteId).update({ profilPublie: false, artisteId: null });
+        d.profilPublie = false;
+        d.artisteId = null;
+        await d.save();
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// GET /api/espace-artiste/oeuvres — liste des œuvres de l'artiste connecté
+// GET /api/espace-artiste/oeuvres
 router.get('/oeuvres', async (req, res) => {
     try {
         const compteId = req.user.id;
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        const d = compteSnap.data();
+        const d = await CompteArtiste.findById(compteId);
         const nomArt = (d.nomArtiste || (d.prenom + ' ' + d.nom)).toLowerCase().trim();
 
-        const snap = await db.collection(COL_OEUVRES).get();
-        const miennes = [];
-        snap.forEach(doc => {
-            const o = doc.data();
-            if (o.compteId === compteId || (o.artiste || '').toLowerCase().trim() === nomArt) {
-                miennes.push({ id: doc.id, ...o });
-            }
-        });
+        const toutes = await Oeuvre.find({});
+        const miennes = toutes.filter(o =>
+            o.compteId === compteId || (o.artiste || '').toLowerCase().trim() === nomArt
+        );
         res.json(miennes);
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// POST /api/espace-artiste/oeuvres — ajoute une œuvre pour l'artiste connecté
+// POST /api/espace-artiste/oeuvres
 router.post('/oeuvres', async (req, res) => {
     const { titre, type, annee, url, desc } = req.body;
     if (!titre || !type) return res.status(400).json({ erreur: 'Titre et type obligatoires.' });
     try {
         const compteId = req.user.id;
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        const d = compteSnap.data();
+        const d = await CompteArtiste.findById(compteId);
         const nomArt = d.nomArtiste || (d.prenom + ' ' + d.nom);
 
-        const ref = await db.collection(COL_OEUVRES).add({
+        const oeuvre = await Oeuvre.create({
             titre, type, annee: annee || '', url: url || '', desc: desc || '',
             artiste: nomArt, compteId, likes: 0, date: new Date().toLocaleDateString('fr-FR')
         });
-        res.status(201).json({ id: ref.id });
+        res.status(201).json({ id: oeuvre.id });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// PUT /api/espace-artiste/oeuvres/:id — modifie une œuvre (vérifie qu'elle appartient au compte)
+// PUT /api/espace-artiste/oeuvres/:id
 router.put('/oeuvres/:id', async (req, res) => {
     const { titre, type, annee, url, desc } = req.body;
     if (!titre || !type) return res.status(400).json({ erreur: 'Titre et type obligatoires.' });
     try {
-        const ref = db.collection(COL_OEUVRES).doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
-        if (snap.data().compteId !== req.user.id) {
+        const oeuvre = await Oeuvre.findById(req.params.id);
+        if (!oeuvre) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
+        if (oeuvre.compteId !== req.user.id) {
             return res.status(403).json({ erreur: 'Cette œuvre ne vous appartient pas.' });
         }
-        await ref.update({ titre, type, annee: annee || '', url: url || '', desc: desc || '' });
+        oeuvre.titre = titre;
+        oeuvre.type = type;
+        oeuvre.annee = annee || '';
+        oeuvre.url = url || '';
+        oeuvre.desc = desc || '';
+        await oeuvre.save();
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// DELETE /api/espace-artiste/oeuvres/:id — supprime une œuvre (vérifie l'appartenance)
+// DELETE /api/espace-artiste/oeuvres/:id
 router.delete('/oeuvres/:id', async (req, res) => {
     try {
-        const ref = db.collection(COL_OEUVRES).doc(req.params.id);
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
-        if (snap.data().compteId !== req.user.id) {
+        const oeuvre = await Oeuvre.findById(req.params.id);
+        if (!oeuvre) return res.status(404).json({ erreur: 'Œuvre introuvable.' });
+        if (oeuvre.compteId !== req.user.id) {
             return res.status(403).json({ erreur: 'Cette œuvre ne vous appartient pas.' });
         }
-        await ref.delete();
+        await Oeuvre.findByIdAndDelete(req.params.id);
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
 });
 
-// DELETE /api/espace-artiste/mon-compte — supprime définitivement le compte + œuvres + profil public
+// DELETE /api/espace-artiste/mon-compte
 router.delete('/mon-compte', async (req, res) => {
     try {
         const compteId = req.user.id;
-        const compteSnap = await db.collection(COL_COMPTES).doc(compteId).get();
-        if (!compteSnap.exists) return res.status(404).json({ erreur: 'Compte introuvable.' });
-        const d = compteSnap.data();
+        const d = await CompteArtiste.findById(compteId);
+        if (!d) return res.status(404).json({ erreur: 'Compte introuvable.' });
 
-        // 1. Supprimer toutes les œuvres liées
-        const snapOeu = await db.collection(COL_OEUVRES).get();
-        const suppressions = [];
-        snapOeu.forEach(doc => {
-            if (doc.data().compteId === compteId) {
-                suppressions.push(db.collection(COL_OEUVRES).doc(doc.id).delete());
-            }
-        });
-        await Promise.all(suppressions);
+        await Oeuvre.deleteMany({ compteId });
 
-        // 2. Supprimer le profil public si publié
         if (d.artisteId) {
-            await db.collection(COL_ARTISTES).doc(d.artisteId).delete();
+            await Artiste.findByIdAndDelete(d.artisteId);
         }
 
-        // 3. Supprimer le compte
-        await db.collection(COL_COMPTES).doc(compteId).delete();
+        await CompteArtiste.findByIdAndDelete(compteId);
 
         res.json({ ok: true });
     } catch (e) {

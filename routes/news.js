@@ -1,19 +1,15 @@
 // ══════════════════════════════════════════
-// ROUTES NEWS / ACTUALITÉS (collection kivu-news)
+// ROUTES NEWS / ACTUALITÉS (MongoDB)
 // ══════════════════════════════════════════
 const express = require('express');
 const router = express.Router();
-const { db } = require('../config/firebase');
+const News = require('../models/News');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-
-const COL = 'kivu-news';
 
 // GET /api/news — liste publique
 router.get('/', async (req, res) => {
     try {
-        const snap = await db.collection(COL).get();
-        const news = [];
-        snap.forEach(doc => news.push({ id: doc.id, ...doc.data() }));
+        const news = await News.find({});
         res.json(news);
     } catch (e) {
         res.status(500).json({ erreur: e.message });
@@ -23,11 +19,11 @@ router.get('/', async (req, res) => {
 // GET /api/news/:id
 router.get('/:id', async (req, res) => {
     try {
-        const snap = await db.collection(COL).doc(req.params.id).get();
-        if (!snap.exists) return res.status(404).json({ erreur: 'Article introuvable.' });
-        res.json({ id: snap.id, ...snap.data() });
+        const article = await News.findById(req.params.id);
+        if (!article) return res.status(404).json({ erreur: 'Article introuvable.' });
+        res.json(article);
     } catch (e) {
-        res.status(500).json({ erreur: e.message });
+        res.status(404).json({ erreur: 'Article introuvable.' });
     }
 });
 
@@ -36,11 +32,11 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     const { titre, cat, texte } = req.body;
     if (!titre || !texte) return res.status(400).json({ erreur: 'Titre et texte obligatoires.' });
     try {
-        const ref = await db.collection(COL).add({
+        const article = await News.create({
             titre, cat: cat || 'artiste', texte,
             date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
         });
-        res.status(201).json({ id: ref.id });
+        res.status(201).json({ id: article.id });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
     }
@@ -51,7 +47,7 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
     const { titre, cat, texte } = req.body;
     if (!titre || !texte) return res.status(400).json({ erreur: 'Titre et texte obligatoires.' });
     try {
-        await db.collection(COL).doc(req.params.id).update({ titre, cat: cat || 'artiste', texte });
+        await News.findByIdAndUpdate(req.params.id, { titre, cat: cat || 'artiste', texte });
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
@@ -61,7 +57,7 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
 // DELETE /api/news/:id — admin uniquement
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
-        await db.collection(COL).doc(req.params.id).delete();
+        await News.findByIdAndDelete(req.params.id);
         res.json({ ok: true });
     } catch (e) {
         res.status(500).json({ erreur: e.message });
